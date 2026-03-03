@@ -41,6 +41,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libx11-dev clang-format-14 ccache
 
+    - name: Install patchelf (Release only)
+      if: ${{ matrix.build_type == 'Release' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y patchelf
     - name: Setup CloudXR SDK
       id: cloudxr-sdk
       uses: ./.github/actions/setup-cloudxr-sdk
@@ -84,6 +89,31 @@ jobs:
     - name: Install (Release only)
       if: matrix.build_type == 'Release'
       run: cmake --install build
+
+    - name: Repair wheel tags with auditwheel (Release only)
+      if: matrix.build_type == 'Release'
+      run: |
+        set -euo pipefail
+
+        shopt -s nullglob
+        wheels=(install/wheels/*.whl)
+        if (( ${#wheels[@]} == 0 )); then
+          echo "No wheels found under install/wheels/*.whl"
+          ls -la install/wheels || true
+          exit 1
+        fi
+
+        mkdir -p install/wheels-repaired
+        for wheel in "${wheels[@]}"; do
+          echo "Repairing ${wheel}"
+          # Exclude GPU driver/runtime libs so wheels stay portable across systems without bundling host-specific binaries.
+          uv run --python ${{ matrix.python_version }} --with "auditwheel==6.6.0" \
+            auditwheel repair --exclude libcuda.so.1 --exclude libvulkan.so.1 --wheel-dir install/wheels-repaired "${wheel}"
+        done
+
+        rm -f install/wheels/*.whl
+        mv install/wheels-repaired/*.whl install/wheels/
+        rmdir install/wheels-repaired || true
 
     - name: Create tarball to preserve permissions
       if: matrix.build_type == 'Release'
