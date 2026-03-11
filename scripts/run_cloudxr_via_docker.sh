@@ -15,9 +15,6 @@ source scripts/setup_cloudxr_env.sh
 # Check CloudXR EULA acceptance
 ./scripts/check_cloudxr_eula.sh || exit 1
 
-# Download CloudXR Runtime SDK if not already present
-./scripts/download_cloudxr_runtime_sdk.sh || exit 1
-
 # Download CloudXR Web SDK if not already present
 ./scripts/download_cloudxr_sdk.sh || exit 1
 
@@ -34,5 +31,6 @@ fi
 $COMPOSE_CMD \
     --env-file "$ENV_DEFAULT" \
     --env-file "$ENV_LOCAL" \
+    -f deps/cloudxr/docker-compose.runtime.yaml \
     -f deps/cloudxr/docker-compose.yaml \
     up --build

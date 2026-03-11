@@ -54,8 +54,8 @@ FORCE_BUILD=false
 EXIT_CODE=0
 PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
 
-# Compose files and project name
-COMPOSE_BASE="deps/cloudxr/docker-compose.yaml"
+# Compose files: shared runtime base + test overrides
+COMPOSE_RUNTIME="deps/cloudxr/docker-compose.runtime.yaml"
 COMPOSE_TEST="deps/cloudxr/docker-compose.test.yaml"
 
 # Use a different project name to isolate volumes from run_cloudxr.sh
@@ -167,7 +167,7 @@ cleanup_containers() {
         --env-file "$ENV_DEFAULT" \
         ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
         ${ENV_TEST:+--env-file "$ENV_TEST"} \
-        -f "$COMPOSE_BASE" \
+        -f "$COMPOSE_RUNTIME" \
         -f "$COMPOSE_TEST" \
         down -v --remove-orphans 2>/dev/null || true
     log_success "Cleanup complete"
@@ -185,6 +185,10 @@ for test in "${CXR_NATIVE_GPU_TESTS[@]}"; do
     log_info "  - $test"
 done
 log_info "Test container Python version: $PYTHON_VERSION"
+
+# Compose interpolation reads environment variables, not shell locals.
+export PYTHON_VERSION
+export CXR_BUILD_CONTEXT="$GIT_ROOT"
 
 # Join arrays into comma-separated strings for docker-compose environment variables
 CXR_PYTHON_GPU_TESTS_ENV=$(IFS=','; echo "${CXR_PYTHON_GPU_TESTS[*]}")
@@ -222,13 +226,17 @@ WHEEL_COUNT=$(find install/wheels -name "isaacteleop-*.whl" | wc -l)
 if [ "$WHEEL_COUNT" -eq 0 ]; then
     log_error "No isaacteleop wheel found in install/wheels/"
     exit 1
-elif [ "$WHEEL_COUNT" -gt 1 ]; then
-    log_error "Multiple isaacteleop wheels found - consider cleaning install/wheels/"
-    ls -la install/wheels/isaacteleop-*.whl
-    exit 1
 fi
 
-log_success "Found isaacteleop wheel in install/wheels/"
+log_success "Found $WHEEL_COUNT isaacteleop wheel(s) in install/wheels/"
+
+# Make docker-compose.runtime install from a local wheel directory via pip find-links.
+export ISAACTELEOP_PIP_SPEC="isaacteleop[cloudxr]"
+export ISAACTELEOP_PIP_FIND_LINKS="/workspace/install/wheels"
+export ISAACTELEOP_PIP_DEBUG=0
+log_info "Using ISAACTELEOP_PIP_SPEC=$ISAACTELEOP_PIP_SPEC"
+log_info "Using ISAACTELEOP_PIP_FIND_LINKS=$ISAACTELEOP_PIP_FIND_LINKS"
+log_info "Using ISAACTELEOP_PIP_DEBUG=$ISAACTELEOP_PIP_DEBUG"
 
 WHEEL_PATH=$(find install/wheels -name "isaacteleop-*.whl")
 WHEEL_BASENAME=$(basename "$WHEEL_PATH")
@@ -265,7 +273,7 @@ docker compose \
     --env-file "$ENV_DEFAULT" \
     ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
     ${ENV_TEST:+--env-file "$ENV_TEST"} \
-    -f "$COMPOSE_BASE" \
+    -f "$COMPOSE_RUNTIME" \
     -f "$COMPOSE_TEST" \
     up --build -d cloudxr-runtime
 
@@ -280,7 +288,7 @@ while [ $WAITED -lt $MAX_WAIT ]; do
         --env-file "$ENV_DEFAULT" \
         ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
         ${ENV_TEST:+--env-file "$ENV_TEST"} \
-        -f "$COMPOSE_BASE" \
+        -f "$COMPOSE_RUNTIME" \
         -f "$COMPOSE_TEST" \
         ps cloudxr-runtime 2>/dev/null | grep -q "healthy"; then
         log_success "CloudXR runtime is healthy"
@@ -301,7 +309,7 @@ if [ $WAITED -ge $MAX_WAIT ]; then
         --env-file "$ENV_DEFAULT" \
         ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
         ${ENV_TEST:+--env-file "$ENV_TEST"} \
-        -f "$COMPOSE_BASE" \
+        -f "$COMPOSE_RUNTIME" \
         -f "$COMPOSE_TEST" \
         logs cloudxr-runtime
     exit 1
@@ -316,7 +324,7 @@ if docker compose \
     --env-file "$ENV_DEFAULT" \
     ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
     ${ENV_TEST:+--env-file "$ENV_TEST"} \
-    -f "$COMPOSE_BASE" \
+    -f "$COMPOSE_RUNTIME" \
     -f "$COMPOSE_TEST" \
     run --rm isaacteleop-tests; then
     log_success "All tests passed!"
@@ -335,7 +343,7 @@ if [ "${CI:-false}" = "true" ]; then
         --env-file "$ENV_DEFAULT" \
         ${ENV_LOCAL:+--env-file "$ENV_LOCAL"} \
         ${ENV_TEST:+--env-file "$ENV_TEST"} \
-        -f "$COMPOSE_BASE" \
+        -f "$COMPOSE_RUNTIME" \
         -f "$COMPOSE_TEST" \
         logs
     echo "::endgroup::"

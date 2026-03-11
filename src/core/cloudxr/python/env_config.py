@@ -16,7 +16,18 @@ from pathlib import Path
 
 
 class EnvConfig:
-    """Singleton holding CloudXR env configuration and resolved state."""
+    """Singleton holding CloudXR env configuration and resolved state.
+
+    Configuration can come from three sources, with this precedence order:
+    1. Env file (highest precedence)
+    2. Process environment variables
+    3. Hard-coded defaults in this class (_DEFAULT_ENV)
+
+    Process environment variables are primarily intended for containerized
+    environments (for example Docker/docker-compose). For local development,
+    setting values via the env file is recommended over manually exporting
+    environment variables.
+    """
 
     _instance: "EnvConfig | None" = None
 
@@ -169,7 +180,18 @@ class EnvConfig:
                     stacklevel=2,
                 )
                 del overrides[key]
+
         merged = self._merge_env(self._DEFAULT_ENV, overrides)
+
+        # Respect existing process environment values (e.g. docker-compose
+        # container env) unless explicitly overridden via env_file.
+        for key in self._DEFAULT_ENV:
+            if key in self._RESOLVED_ONLY_KEYS or key in overrides:
+                continue
+            value = os.environ.get(key)
+            if value is not None:
+                merged[key] = value
+
         return self._resolve_and_apply(merged)
 
     # -------------------------------------------------------------------------
