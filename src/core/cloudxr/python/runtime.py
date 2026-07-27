@@ -32,6 +32,7 @@ RUNTIME_POLL_INTERVAL_SEC: float = 0.5
 """Polling interval [s] used by :func:`wait_for_runtime_ready_sync`."""
 
 _CLOUDXR_EXP_ENV = "ISAAC_TELEOP_CLOUDXR_EXP"
+_CLOUDXR_JOIN_MAIN_ENV = "ISAAC_TELEOP_CLOUDXR_JOIN_MAIN"
 _CLOUDXR_MODULE = "isaacteleop.cloudxr"
 _CLOUDXR_EXP_MODULE = "isaacteleop.cloudxr_exp"
 
@@ -63,6 +64,19 @@ def _is_tegra_t234() -> bool:
 def _should_use_exp() -> bool:
     """Return True when the experimental CloudXR runtime should be used."""
     raw = os.environ.get(_CLOUDXR_EXP_ENV, "").strip().lower()
+    if not raw:
+        return _is_tegra_t234()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _should_join_main() -> bool:
+    """Return True when ``nv_cxr_service_join`` should run on the main thread.
+
+    Default is auto-on for Jetson Orin (T234). Override with
+    ``ISAAC_TELEOP_CLOUDXR_JOIN_MAIN`` (``1``/``0``). See the join-main
+    branch in :func:`run` for why new Python threads are forbidden there.
+    """
+    raw = os.environ.get(_CLOUDXR_JOIN_MAIN_ENV, "").strip().lower()
     if not raw:
         return _is_tegra_t234()
     return raw in ("1", "true", "yes", "on")
@@ -328,16 +342,30 @@ def run() -> None:
     state["service_created"] = True
     lib.nv_cxr_service_start(svc)
 
-    # Run the blocking join() in a worker thread so the main thread stays in Python
-    # and can run the signal handler. Otherwise Ctrl+C is not processed while we're
-    # inside the native nv_cxr_service_join() call.
-    def join_then_destroy() -> None:
+    if _should_join_main():
+        # Orin (T234) workaround: after nv_cxr_service_create/start, starting
+        # any additional Python thread aborts with:
+        #   _PyGILState_NoteThreadState: Couldn't create autoTSSkey mapping
+        # That includes both the historical join worker thread and a later
+        # attempt to recover Ctrl+C via a sigwait helper thread. Stay on the
+        # main thread for join+destroy only.
+        #
+        # Tradeoff: while join blocks, Python signal handlers on this process
+        # do not run. Shutdown is the launcher tearing down this worker
+        # process (SIGTERM/SIGINT + atexit -> nv_cxr_service_stop), not an
+        # in-process signal path during join.
         lib.nv_cxr_service_join(svc)
         lib.nv_cxr_service_destroy(svc)
+    else:
+        # Non-Orin: join in a worker so the main thread can run signal handlers
+        # (Ctrl+C) while blocked in native nv_cxr_service_join().
+        def join_then_destroy() -> None:
+            lib.nv_cxr_service_join(svc)
+            lib.nv_cxr_service_destroy(svc)
 
-    worker = threading.Thread(target=join_then_destroy, daemon=False)
-    worker.start()
-    worker.join()
+        worker = threading.Thread(target=join_then_destroy, daemon=False)
+        worker.start()
+        worker.join()
 
     if state["interrupted"]:
         raise KeyboardInterrupt()
