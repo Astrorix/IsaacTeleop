@@ -261,9 +261,7 @@ def test_source_mode_matches_each_bvh_wrist_axis(
     expected = (
         Rotation.from_quat(raw) * Rotation.from_quat(configured_offset)
     ).as_quat()
-    assert (
-        _rotation_error_deg(reference.quaternion_xyzw, expected) < 1.0e-9
-    )
+    assert _rotation_error_deg(reference.quaternion_xyzw, expected) < 1.0e-9
     assert _rotation_error_deg(target.quaternion_xyzw, expected) < 1.0e-9
 
 
@@ -319,8 +317,7 @@ def test_source_target_error_converges_with_rotation_smoothing(
     for side in ("left", "right"):
         assert 0.0 < second[side].source_target_error_deg
         assert (
-            second[side].source_target_error_deg
-            < first[side].source_target_error_deg
+            second[side].source_target_error_deg < first[side].source_target_error_deg
         )
 
 

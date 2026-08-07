@@ -38,9 +38,7 @@ def _targets() -> ArmIkTargets:
 def test_fixed_lower_body_action_dimensions_share_one_source() -> None:
     assert g1_action_dim(use_arm_ik_frame_tasks=True) == 56
     assert g1_action_dim(use_arm_ik_frame_tasks=False) == 28
-    assert G1LocomanipulationAction(use_arm_ik_frame_tasks=True).types[0].shape == (
-        56,
-    )
+    assert G1LocomanipulationAction(use_arm_ik_frame_tasks=True).types[0].shape == (56,)
     assert G1LocomanipulationAction(use_arm_ik_frame_tasks=False).types[0].shape == (
         28,
     )
@@ -98,9 +96,7 @@ def test_noitom_env_disables_agile_policy_and_preserves_pink_scope(
     )
     pink_tasks = pink_action.controller.variable_input_tasks
     assert len(pink_tasks) == 7
-    assert [
-        (task.position_cost, task.orientation_cost) for task in pink_tasks[:6]
-    ] == [
+    assert [(task.position_cost, task.orientation_cost) for task in pink_tasks[:6]] == [
         (18.0, 0.75),
         (18.0, 0.75),
         (9.0, 0.0),

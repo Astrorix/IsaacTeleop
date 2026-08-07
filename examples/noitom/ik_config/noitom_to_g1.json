@@ -25,10 +25,10 @@
   "human_scale_table": {
     "LEFT_SHOULDER": 0.8,
     "LEFT_ELBOW": 0.8,
-    "LEFT_WRIST": 0.8,
+    "LEFT_WRIST": 0.7,
     "RIGHT_SHOULDER": 0.8,
     "RIGHT_ELBOW": 0.8,
-    "RIGHT_WRIST": 0.8
+    "RIGHT_WRIST": 0.7
   },
   "arm_segment_clamps_m": {
     "upper_arm_min": 0.1,
@@ -39,7 +39,7 @@
   "ik_match_table": {
     "left_shoulder_yaw_link": [
       "LEFT_SHOULDER",
-      6.0,
+      9.0,
       0.0,
       [0.0, 0.0, 0.0],
       [-0.2706, 0.6533, 0.2706, 0.6533]
@@ -53,14 +53,14 @@
     ],
     "left_wrist_yaw_link": [
       "LEFT_WRIST",
-      18.0,
+      3.0,
       0.75,
       [0.0, 0.0, 0.0],
-      [0.0, 0.0, 1.0, 0.0]
+      [0.0, 0.7071, 0.7071, 0.0]
     ],
     "right_shoulder_yaw_link": [
       "RIGHT_SHOULDER",
-      6.0,
+      9.0,
       0.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.7071, 0.0]
@@ -74,10 +74,10 @@
     ],
     "right_wrist_yaw_link": [
       "RIGHT_WRIST",
-      18.0,
+      3.0,
       0.75,
       [0.0, 0.0, 0.0],
-      [0.0, 0.0, 0.0, 1.0]
+      [-0.7071, 0.0, 0.0, 0.7071]
     ]
   }
 }

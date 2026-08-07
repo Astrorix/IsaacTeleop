@@ -70,9 +70,7 @@ def test_raw_semantic_and_reference_wrist_diagnostics_share_paths(
     ) == pytest.approx(1.0)
 
     reference_frames = retargeter.reference_wrist_frames(bvh_rest_tpose_frame)
-    reference_positions = retargeter.reference_skeleton_positions(
-        bvh_rest_tpose_frame
-    )
+    reference_positions = retargeter.reference_skeleton_positions(bvh_rest_tpose_frame)
     for side, wrist_index in (("left", 20), ("right", 21)):
         np.testing.assert_allclose(
             diagnostics[side].bvh_aligned_raw_world.position,
@@ -177,7 +175,12 @@ def test_pelvis_local_pose_round_trip() -> None:
         [0.4, -0.3, 0.8, *Rotation.from_euler("z", 37.0, degrees=True).as_quat()]
     )
     world_pose = np.array(
-        [0.7, 0.2, 1.1, *Rotation.from_euler("xyz", [20, -10, 5], degrees=True).as_quat()]
+        [
+            0.7,
+            0.2,
+            1.1,
+            *Rotation.from_euler("xyz", [20, -10, 5], degrees=True).as_quat(),
+        ]
     )
     pelvis_matrix = _pose_to_matrix(pelvis_world)
 
