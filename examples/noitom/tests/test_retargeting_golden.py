@@ -1,23 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Golden-data regression tests for NoitomG1Retargeter (Phase A refactoring).
-
-These tests verify that the Phase A architectural refactoring (extracting
-per-arm state into ``NoitomArmIkTargetNode``) produces bit-for-bit identical
-outputs to the pre-refactoring ``NoitomG1Retargeter``.
-
-Golden values were captured by running the ORIGINAL single-monolith
-implementation on the mock T-pose / raised-arm frames defined in conftest.py,
-before any code was changed, and then stored as Python literals.
-
-Tolerance: ``atol=1e-9`` (pure code-move refactoring must not change any
-floating-point path; if any assertion fails the refactoring introduced a
-numerical regression).
-
-The tests do NOT require Isaac Lab or Isaac Sim — only ``isaacteleop``
-(schema + retargeting engine) and ``numpy``/``scipy``.
-"""
+"""Golden-data regression tests for Noitom G1 retargeting."""
 
 from __future__ import annotations
 
@@ -31,7 +15,7 @@ from noitom_retargeting import (
 )
 
 # ---------------------------------------------------------------------------
-# Golden data (captured from the original monolith implementation)
+# Golden IK targets for the canonical mock frames.
 # ---------------------------------------------------------------------------
 
 # POST_CALIBRATION — smoothed poses immediately after calibrate(T-pose)
@@ -320,7 +304,7 @@ class TestClearCalibration:
 
 
 class TestArmIkTargetNode:
-    """Unit tests for the Phase A helper node in isolation."""
+    """Exercise per-arm target state independently."""
 
     def _make_node(self, is_left: bool) -> NoitomArmIkTargetNode:
         settings = NoitomRetargetingSettings()

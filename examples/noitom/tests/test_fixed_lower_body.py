@@ -84,7 +84,7 @@ def test_noitom_env_disables_agile_policy_and_preserves_pink_scope(
     assert cfg.scene.robot.spawn.articulation_props.fix_root_link is True
     assert cfg.actions.lower_body_joint_pos is None
     assert cfg.observations.lower_body_policy is None
-    assert "root_fixed=1 leg_action=disabled action_dim=56" in capsys.readouterr().out
+    assert "root_fixed=1 leg_action=disabled action_dim=28" in capsys.readouterr().out
 
     pink_action = cfg.actions.upper_body_ik
     controlled_patterns = pink_action.pink_controlled_joint_names
@@ -95,16 +95,12 @@ def test_noitom_env_disables_agile_policy_and_preserves_pink_scope(
         for leg_name in ("hip", "knee", "ankle")
     )
     pink_tasks = pink_action.controller.variable_input_tasks
-    assert len(pink_tasks) == 7
-    assert [(task.position_cost, task.orientation_cost) for task in pink_tasks[:6]] == [
-        (18.0, 0.75),
-        (18.0, 0.75),
-        (9.0, 0.0),
-        (9.0, 0.0),
-        (6.0, 0.0),
-        (6.0, 0.0),
+    assert len(pink_tasks) == 3
+    assert [(task.position_cost, task.orientation_cost) for task in pink_tasks[:2]] == [
+        (5.0, 0.75),
+        (5.0, 0.75),
     ]
-    assert pink_tasks[6].cost == 0.05
+    assert pink_tasks[2].cost == 0.05
     assert pink_action.controller.fail_on_joint_limit_violation is False
     assert DEFAULT_NOITOM_G1_SETTINGS.wrist_pitch_limit_deg == 80.0
     assert DEFAULT_NOITOM_G1_SETTINGS.wrist_yaw_limit_deg == 80.0

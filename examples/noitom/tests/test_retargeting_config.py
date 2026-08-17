@@ -56,8 +56,8 @@ def test_config_wrist_offsets_normalize_mirrored_hand_frames() -> None:
 
     left_offset = config.match("left", "wrist").rotation_offset_xyzw
     right_offset = config.match("right", "wrist").rotation_offset_xyzw
-    np.testing.assert_allclose(left_offset, [0.0, 0.0, 1.0, 0.0])
-    np.testing.assert_allclose(right_offset, [0.0, 0.0, 0.0, 1.0])
+    np.testing.assert_allclose(left_offset, [0.0, np.sqrt(0.5), np.sqrt(0.5), 0.0])
+    np.testing.assert_allclose(right_offset, [-np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)])
     for offset in (left_offset, right_offset):
         assert np.linalg.norm(offset) == pytest.approx(1.0)
         assert np.linalg.det(Rotation.from_quat(offset).as_matrix()) == pytest.approx(
@@ -82,11 +82,11 @@ def test_calibration_applies_per_segment_human_scales(tpose_frame) -> None:
     scales = retargeter.calibration_bone_scales
     assert scales is not None
     left, right = scales
-    # Fixture bones are 0.30 m and the declarative scale table uses 0.8.
+    # Fixture bones are 0.30 m; upper arms use 0.8 and forearms use 0.7.
     assert left.upper_arm == pytest.approx(0.24)
-    assert left.forearm == pytest.approx(0.24)
+    assert left.forearm == pytest.approx(0.21)
     assert right.upper_arm == pytest.approx(0.24)
-    assert right.forearm == pytest.approx(0.24)
+    assert right.forearm == pytest.approx(0.21)
 
 
 def test_neutral_targets_match_configured_segment_lengths(tpose_frame) -> None:
@@ -102,7 +102,7 @@ def test_neutral_targets_match_configured_segment_lengths(tpose_frame) -> None:
             0.24, abs=1.0e-9
         )
         assert np.linalg.norm(wrist.position - elbow.position) == pytest.approx(
-            0.24, abs=1.0e-9
+            0.21, abs=1.0e-9
         )
 
 
@@ -118,32 +118,29 @@ def test_raised_arm_uses_shortest_arc_and_configured_reach(
     elbow = targets.left_elbow.position
     wrist = targets.left_wrist.position
 
-    # The fixture rotates both left-arm segments by 90 degrees. With motion_scale=1,
-    # the shortest-arc solve points both configured 0.24 m links straight upward.
+    # With motion_scale=1, both links rotate 90 degrees and point upward.
     np.testing.assert_allclose(elbow - shoulder, [0.0, 0.0, 0.24], atol=1.0e-9)
-    np.testing.assert_allclose(wrist - elbow, [0.0, 0.0, 0.24], atol=1.0e-9)
+    np.testing.assert_allclose(wrist - elbow, [0.0, 0.0, 0.21], atol=1.0e-9)
     assert np.linalg.norm(targets.left_wrist.quaternion_xyzw) == pytest.approx(1.0)
 
 
-def test_config_change_from_legacy_is_bounded_and_explained(
+def test_config_change_from_fixed_lengths_is_bounded(
     tpose_frame, left_raised_frame
 ) -> None:
     config = NoitomG1Retargeter(_config_settings())
-    legacy_settings = _config_settings()
-    legacy_settings.ik_config_path = None
-    legacy = NoitomG1Retargeter(legacy_settings)
+    fixed_settings = _config_settings()
+    fixed_settings.ik_config_path = None
+    fixed = NoitomG1Retargeter(fixed_settings)
     assert config.calibrate(tpose_frame)
-    assert legacy.calibrate(tpose_frame)
+    assert fixed.calibrate(tpose_frame)
 
     config_targets = config.retarget(left_raised_frame)
-    legacy_targets = legacy.retarget(left_raised_frame)
-    assert config_targets is not None and legacy_targets is not None
+    fixed_targets = fixed.retarget(left_raised_frame)
+    assert config_targets is not None and fixed_targets is not None
     position_delta = np.linalg.norm(
-        config_targets.left_wrist.position - legacy_targets.left_wrist.position
+        config_targets.left_wrist.position - fixed_targets.left_wrist.position
     )
-    # Legacy aligned-skeleton mode applies reference_arm_length_scale=0.7 to fixed
-    # lengths (0.378 m reach). Config mode intentionally uses measured 0.48 m reach,
-    # so this synthetic straight-arm pose changes by about 10 cm, not silently.
+    # Fixed-length mode has 0.378 m reach; the calibrated config has 0.45 m reach.
     assert position_delta < 0.11
 
 
@@ -211,12 +208,14 @@ def test_source_rest_tpose_applies_side_specific_semantic_offsets(
     targets = retargeter.current_arm_targets
     diagnostics = retargeter.wrist_pose_diagnostics(bvh_rest_tpose_frame)
     assert diagnostics is not None
-    for side, reference, target, expected_offset in (
-        ("left", references["left"], targets.left_wrist, [0.0, 0.0, 1.0, 0.0]),
-        ("right", references["right"], targets.right_wrist, [0.0, 0.0, 0.0, 1.0]),
+    config = load_noitom_ik_config(DEFAULT_NOITOM_IK_CONFIG_PATH)
+    for side, reference, target in (
+        ("left", references["left"], targets.left_wrist),
+        ("right", references["right"], targets.right_wrist),
     ):
         raw = diagnostics[side].bvh_aligned_raw_world.quaternion_xyzw
         semantic = diagnostics[side].bvh_semantic_world.quaternion_xyzw
+        expected_offset = config.match(side, "wrist").rotation_offset_xyzw
         expected = (
             Rotation.from_quat(raw) * Rotation.from_quat(expected_offset)
         ).as_quat()

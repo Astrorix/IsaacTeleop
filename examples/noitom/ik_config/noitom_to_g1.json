@@ -3,10 +3,9 @@
     "Noitom full-body to Unitree G1 upper-body IK targets for real-time locomanipulation.",
     "Coordinates use Isaac Z-up after operator_faces_robot; quaternion order is xyzw.",
     "Only shoulder, elbow, and wrist mappings are included; the Noitom task fixes the legs.",
-    "The 0.8 human scale ratios follow GMR noi_to_g1.json.",
+    "Calibration scales upper arms by 0.8 and forearms by 0.7.",
     "Wrist rotation offsets are BVH-local post-rotations, not world poses or VR",
-    "controller offsets. They normalize mirrored hand-bone frames into G1 anatomy:",
-    "left is 180 degrees about local Z (flipping X/Y); right is identity."
+    "controller offsets. The side-specific values align Noitom hand frames with G1."
   ],
   "human_root_name": "PELVIS",
   "robot_root_name": "pelvis",
@@ -39,43 +38,43 @@
   "ik_match_table": {
     "left_shoulder_yaw_link": [
       "LEFT_SHOULDER",
-      9.0,
-      0.0,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [-0.2706, 0.6533, 0.2706, 0.6533]
     ],
     "left_elbow_link": [
       "LEFT_ELBOW",
-      9.0,
-      0.0,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [-0.2706, 0.6533, 0.2706, 0.6533]
     ],
     "left_wrist_yaw_link": [
       "LEFT_WRIST",
-      3.0,
-      0.75,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [0.0, 0.7071, 0.7071, 0.0]
     ],
     "right_shoulder_yaw_link": [
       "RIGHT_SHOULDER",
-      9.0,
-      0.0,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.7071, 0.0]
     ],
     "right_elbow_link": [
       "RIGHT_ELBOW",
-      9.0,
-      0.0,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.7071, 0.0]
     ],
     "right_wrist_yaw_link": [
       "RIGHT_WRIST",
-      3.0,
-      0.75,
+      5.0,
+      10.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.0, 0.7071]
     ]

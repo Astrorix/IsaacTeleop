@@ -123,7 +123,7 @@ class NoitomG1Settings:
     draw_elbow_targets: bool = True
     draw_shoulder_targets: bool = True
     # Wrist + elbow + shoulder LocalFrameTasks for Pink IK (56D action).
-    use_arm_ik_frame_tasks: bool = True
+    use_arm_ik_frame_tasks: bool = False
     # Track wrist orientation without over-constraining elbow/shoulder frames.
     wrist_orientation_cost: float = 0.75
     # Noitom-only Pink tuning for fast recorded motion.
@@ -790,8 +790,8 @@ def _configure_noitom_pink_ik(
 
     def configured_cost(frame: str, role: str, *, rotation: bool = False) -> float:
         if ik_config is None:
-            legacy_costs = {"wrist": 18.0, "elbow": 9.0, "shoulder": 6.0}
-            return wrist_orientation_cost if rotation else legacy_costs[role]
+            fallback_costs = {"wrist": 18.0, "elbow": 9.0, "shoulder": 6.0}
+            return wrist_orientation_cost if rotation else fallback_costs[role]
         side = "left" if "left" in frame else "right"
         mapping = ik_config.match(side, role)
         if rotation and role == "wrist":

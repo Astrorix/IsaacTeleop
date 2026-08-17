@@ -94,8 +94,14 @@ def test_raw_semantic_and_reference_wrist_diagnostics_share_paths(
         diagnostics["right"].bvh_aligned_raw_world.as_action_pose(),
         diagnostics["right"].bvh_semantic_world.as_action_pose(),
     )
-    assert left_raw_semantic_error[1] == pytest.approx(180.0)
-    assert right_raw_semantic_error[1] == pytest.approx(0.0)
+    for side, error in (
+        ("left", left_raw_semantic_error),
+        ("right", right_raw_semantic_error),
+    ):
+        expected_deg = np.rad2deg(
+            Rotation.from_quat(diagnostics[side].local_offset_xyzw).magnitude()
+        )
+        assert error[1] == pytest.approx(expected_deg)
 
 
 def test_first_valid_wrist_pose_waits_for_both_wrists_and_resets(

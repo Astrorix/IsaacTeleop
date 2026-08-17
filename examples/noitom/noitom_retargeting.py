@@ -94,16 +94,7 @@ class NoitomIkConfig:
 
 @dataclass(frozen=True)
 class _ArmBoneScales:
-    """Per-arm robot link lengths derived from calibration + config-table ratios.
-
-    Phase B: replaces the static ``NoitomRetargetingSettings.robot_upper_arm_length``
-    /``robot_forearm_length`` constants with values computed from the operator's
-    actual measured bone lengths at calibration time multiplied by per-segment scale
-    ratios loaded from ``ik_config/noitom_to_g1.json``.
-
-    When *no* config path is provided, these are never constructed and the FK
-    functions fall back to the settings constants, keeping Phase-A behaviour intact.
-    """
+    """Per-arm robot link lengths derived from calibration and config ratios."""
 
     upper_arm: float  # robot upper-arm length in metres
     forearm: float  # robot forearm length in metres
@@ -258,19 +249,7 @@ def _arm_bone_scales_from_config(
     config: NoitomIkConfig,
     side: str,
 ) -> _ArmBoneScales:
-    """Compute robot link lengths for one arm from calibration data + config ratios.
-
-    Algorithm (Phase B)
-    -------------------
-    1. Read ``human_scale_table`` ratios from the config dict.
-    2. Multiply each measured human bone length by the corresponding ratio to
-       obtain target robot link lengths.
-    3. Apply physical clamp bounds from ``arm_segment_clamps_m`` (G1 geometry
-       limits) to guard against degenerate mocap measurements.
-    4. The ``arm_scale_min``/``arm_scale_max`` from settings are *not* applied
-       here — they guard the legacy global scale in the calibration path and are
-       not applicable to per-segment lengths.
-    """
+    """Scale measured arm segments and clamp them to configured robot limits."""
     elbow_joint = config.match(side, "elbow").human_joint
     wrist_joint = config.match(side, "wrist").human_joint
     upper_ratio = config.human_scale_table[elbow_joint]
@@ -363,10 +342,7 @@ class NoitomRetargetingSettings:
     track_shoulder_ik_targets: bool = True
     delta_limit: np.ndarray = field(default_factory=lambda: _DELTA_LIMIT.copy())
     sync_nominal_at_calibration: bool = True
-    # Phase B: path to the IK config JSON.  When set, robot arm link lengths are
-    # derived from measured human bone lengths at calibration time (adaptive scaling)
-    # instead of the hardcoded robot_upper_arm_length / robot_forearm_length constants.
-    # When None (default), behaviour is identical to Phase A.
+    # Without a config, FK uses the fixed arm lengths above.
     ik_config_path: str | None = None
 
 
@@ -496,35 +472,12 @@ class _CalibrationState:
     nominal_right_elbow: SE3Pose
     nominal_left_shoulder: SE3Pose
     nominal_right_shoulder: SE3Pose
-    # Phase B: per-arm robot link lengths computed from human measurements + config
-    # table.  None when no ik_config_path is set (Phase-A-compatible mode).
     left_arm_bone_scales: _ArmBoneScales | None = None
     right_arm_bone_scales: _ArmBoneScales | None = None
 
 
 class NoitomArmIkTargetNode:
-    """Per-arm state container: smoothed poses, bounded wrist twist, default poses.
-
-    Phase A refactoring: per-arm smoothed-pose state, bounded-wrist-twist state,
-    and default-pose construction are extracted from ``NoitomG1Retargeter`` into
-    this helper class.  No algorithm changes — this is a pure structural
-    reorganisation.  All computation functions remain as module-level free
-    functions in this file.
-
-    Responsibilities
-    ----------------
-    - Store and update the smoothed wrist / elbow / shoulder ``SE3Pose``.
-    - Maintain the bounded wrist-twist accumulator across frames.
-    - Provide default (uncalibrated) elbow and shoulder poses.
-    - Apply exponential-smoothing updates via ``_smooth_pose``.
-
-    Non-responsibilities (kept in ``NoitomG1Retargeter``)
-    ------------------------------------------------------
-    - Parsing raw mocap frames.
-    - Computing ``_CalibrationState``.
-    - IK target computation (``_solve_wrist_target`` etc.).
-    - Parameter syncing.
-    """
+    """Own smoothed IK targets and bounded wrist-twist state for one arm."""
 
     def __init__(
         self,
@@ -708,11 +661,9 @@ class NoitomG1Retargeter(BaseRetargeter):
         )
         self._calibration: _CalibrationState | None = None
         self._latest_torso: _TorsoFrame | None = None
-        # Phase B: load the IK config JSON once at construction time (None = Phase-A mode).
         self._ik_config: NoitomIkConfig | None = None
         if self._settings.ik_config_path is not None:
             self._ik_config = load_noitom_ik_config(self._settings.ik_config_path)
-        # Phase A: per-arm state is now managed by NoitomArmIkTargetNode instances.
         self._left_arm = NoitomArmIkTargetNode(
             is_left=True,
             settings=self._settings,
@@ -886,12 +837,7 @@ class NoitomG1Retargeter(BaseRetargeter):
     def calibration_bone_scales(
         self,
     ) -> tuple[_ArmBoneScales, _ArmBoneScales] | None:
-        """Return the (left, right) calibrated robot arm link lengths, or None.
-
-        Phase B: returns per-arm bone scales computed from the config table if an
-        ``ik_config_path`` was provided.  Returns ``None`` in Phase-A-compatible mode
-        (no config) or before calibration completes.
-        """
+        """Return calibrated left/right robot arm link lengths when available."""
         if self._calibration is None:
             return None
         left = self._calibration.left_arm_bone_scales
@@ -1176,7 +1122,6 @@ class NoitomG1Retargeter(BaseRetargeter):
     def clear_calibration(self) -> None:
         self._calibration = None
         self._latest_torso = None
-        # Phase A: arm nodes own smoothed-pose and twist state.
         self._left_arm.reset()
         self._right_arm.reset()
 
@@ -1317,9 +1262,8 @@ class NoitomG1Retargeter(BaseRetargeter):
                 )
 
             if self._settings.wrist_orientation_mode == "source":
-                # Config-free source mode has an identity local offset. Initialize
-                # from the same aligned BVH frames used by updates and visualization,
-                # never from the legacy VR-controller nominal quaternions.
+                # Config-free source mode starts from the aligned BVH frames used by
+                # updates and visualization.
                 nominal_left.quaternion_xyzw = _normalize_quat(
                     _aligned_source_wrist_rotation(torso, left).as_quat()
                 )
@@ -1391,7 +1335,6 @@ class NoitomG1Retargeter(BaseRetargeter):
             left_arm_bone_scales=left_bone_scales,
             right_arm_bone_scales=right_bone_scales,
         )
-        # Phase A: arm nodes own the smoothed-pose and twist state.
         self._left_arm.reset_to_nominal(
             nominal_left, nominal_left_elbow, nominal_left_shoulder
         )
@@ -1411,7 +1354,6 @@ class NoitomG1Retargeter(BaseRetargeter):
         torso, left, right, pelvis_world = parsed
         self._latest_torso = torso
         calib = self._calibration
-        # Phase B: retrieve per-arm calibrated link lengths (None in Phase-A mode).
         left_bone_scales = calib.left_arm_bone_scales
         right_bone_scales = calib.right_arm_bone_scales
         left_twist_rad: float | None = None
@@ -1516,7 +1458,6 @@ class NoitomG1Retargeter(BaseRetargeter):
                 bounded_twist_rad=right_twist_rad,
             )
         else:
-            # Phase B: pass per-arm bone_scales so FK uses calibrated link lengths.
             left_target = _solve_wrist_target(
                 torso=torso,
                 arm=left,
@@ -1547,7 +1488,6 @@ class NoitomG1Retargeter(BaseRetargeter):
                 bounded_twist_rad=right_twist_rad,
                 bone_scales=right_bone_scales,
             )
-        # Phase A: delegate smoothing to arm nodes.
         self._left_arm.update_wrist(left_target)
         self._right_arm.update_wrist(right_target)
 
@@ -1563,7 +1503,6 @@ class NoitomG1Retargeter(BaseRetargeter):
                 yaw_delta = _resolve_yaw_delta(
                     _compute_torso_yaw(torso) - calib.body_yaw_isaac, self._settings
                 )
-                # Phase B: pass bone_scales to elbow and shoulder solvers too.
                 left_elbow_target = _solve_elbow_target(
                     arm=left,
                     neutral=calib.left,
@@ -2109,13 +2048,7 @@ def _human_robot_reach_scale(
     settings: NoitomRetargetingSettings,
     bone_scales: _ArmBoneScales | None = None,
 ) -> float:
-    """Shrink motion when the operator arm is longer than the robot chain.
-
-    Phase B: when *bone_scales* is provided (config-driven mode), the robot reach
-    is taken from the calibrated per-arm link lengths rather than the settings
-    constants.  This avoids falsely shrinking motion for operators whose arms are
-    proportionally matched to the robot (ratio ≈ 1 in the config scale table).
-    """
+    """Shrink motion when the operator arm is longer than the active robot chain."""
     human_reach = arm.upper_arm_length + arm.forearm_length
     if bone_scales is not None:
         robot_reach = bone_scales.upper_arm + bone_scales.forearm
@@ -2167,12 +2100,7 @@ def _arm_chain_from_directions(
     settings: NoitomRetargetingSettings,
     bone_scales: _ArmBoneScales | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """FK one arm chain along unit bone directions using G1 (or calibrated) link lengths.
-
-    Phase B: when *bone_scales* is provided, use those link lengths instead of the
-    settings constants so that the FK chain is proportional to the operator's actual
-    arm geometry as measured at calibration time.
-    """
+    """Run arm FK along unit bone directions using active robot link lengths."""
     if bone_scales is not None:
         upper_len = bone_scales.upper_arm
         forearm_len = bone_scales.forearm
@@ -2197,13 +2125,7 @@ def _arm_fk_robot_blended(
     is_left: bool,
     bone_scales: _ArmBoneScales | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Blend mocap posture (bone directions + elbow angle), then FK with arm link lengths.
-
-    Phase B: when *bone_scales* is provided, FK uses the per-arm calibrated link
-    lengths (operator-proportional) instead of the fixed settings constants.  All
-    other logic (direction blending, elbow angle interpolation, singularity avoidance)
-    is unchanged.
-    """
+    """Blend mocap posture, then run FK with the active arm link lengths."""
     shoulder_robot = _shoulder_world_robot(settings, yaw_delta, is_left)
     upper_n = _map_mocap_direction_to_robot(
         neutral_arm.elbow_world - neutral_arm.shoulder_world,
@@ -2234,7 +2156,6 @@ def _arm_fk_robot_blended(
         1.0, abs(yaw_delta) / max(settings.max_torso_yaw_delta, 1e-3)
     )
     scale *= max(0.25, yaw_factor)
-    # Phase B: pass bone_scales so reach-scale check uses calibrated robot lengths.
     scale *= _human_robot_reach_scale(arm, settings, bone_scales=bone_scales)
     upper_d = _slerp_unit_direction(upper_n, upper_f, scale)
 
@@ -2251,7 +2172,6 @@ def _arm_fk_robot_blended(
     if _arm_direction_dot(upper_d, fore_d) > settings.arm_extension_soft_limit:
         fore_d = _bend_forearm_direction(upper_d, fore_d)
 
-    # Phase B: pass bone_scales into FK chains so link lengths are operator-proportional.
     elbow_neutral, wrist_neutral = _arm_chain_from_directions(
         shoulder_robot, upper_n, fore_n, settings, bone_scales=bone_scales
     )
@@ -3060,16 +2980,10 @@ def _solve_wrist_target(
     bounded_twist_rad: float | None = None,
     bone_scales: _ArmBoneScales | None = None,
 ) -> SE3Pose:
-    """Compute one wrist IK target from mocap frame.
-
-    Phase B: when *bone_scales* is provided (config-driven mode), the posture-based
-    FK chain uses operator-proportional link lengths derived from the calibration
-    measurements × config scale ratios, rather than the fixed settings constants.
-    """
+    """Compute one wrist IK target from a mocap frame."""
     yaw_delta = _resolve_yaw_delta(_compute_torso_yaw(torso) - calib_yaw, settings)
 
     if settings.use_posture_based_arms:
-        # Phase B: pass bone_scales so FK uses calibrated per-arm link lengths.
         shoulder_robot, elbow_robot, wrist_robot = _arm_fk_robot_blended(
             arm, neutral, settings, yaw_delta, is_left, bone_scales=bone_scales
         )
