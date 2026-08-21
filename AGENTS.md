@@ -71,6 +71,12 @@ only point here — edit the rules in the doc, not the shims.
   must keep `[ ... ]`. Check the shebang (and, for sourced files, who sources
   them) first.
 
+## Runtime diagnosis
+
+- Treat Kit splash percentages as UI state, not the failure location. Before
+  naming a root cause, correlate the latest run's blocking stack with active
+  process, network, and cache activity; earlier extension errors may be non-fatal.
+
 ## Commits — DCO sign-off for AI-drafted commits
 
 Any commit whose message is drafted or edited by an AI agent **must** include
