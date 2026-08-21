@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from noitom_retargeting import (
     NoitomArmIkTargetNode,
@@ -75,6 +76,28 @@ _GOLDEN_RIGHT_RAISED = {
 }
 
 _TOL = 1e-9
+
+
+def _rotate_mock_frame_in_isaac(frame, rotation: Rotation) -> None:
+    pelvis_joint = frame.joints.joints(0)
+    pelvis = np.array(
+        [
+            -pelvis_joint.pose.position.x,
+            pelvis_joint.pose.position.z,
+            pelvis_joint.pose.position.y,
+        ],
+        dtype=np.float64,
+    )
+    for index in range(24):
+        joint = frame.joints.joints(index)
+        if not joint.is_valid:
+            continue
+        point = joint.pose.position
+        isaac = np.array([-point.x, point.z, point.y], dtype=np.float64)
+        rotated = pelvis + rotation.apply(isaac - pelvis)
+        point.x = -rotated[0]
+        point.y = rotated[2]
+        point.z = rotated[1]
 
 
 def _build_retargeter() -> NoitomG1Retargeter:
@@ -296,6 +319,45 @@ class TestClearCalibration:
         ok = r.calibrate(tpose_frame)
         assert ok
         assert r.is_calibrated
+
+
+@pytest.mark.parametrize(
+    ("requested_deg", "expected_deg"),
+    [
+        ([30.0, 10.0, -15.0], [30.0, 10.0, -15.0]),
+        ([145.0, 40.0, -40.0], [120.0, 24.0, -24.0]),
+    ],
+)
+def test_torso_tracks_bounded_calibration_relative_orientation(
+    tpose_frame, requested_deg, expected_deg
+):
+    settings = NoitomRetargetingSettings(
+        wrist_orientation_mode="twist",
+        track_aligned_mocap_wrists=False,
+        use_posture_based_arms=True,
+        sync_nominal_at_calibration=False,
+        torso_rotation_smoothing=1.0,
+    )
+    retargeter = NoitomG1Retargeter(settings=settings)
+
+    neutral = Rotation.from_euler("ZXY", [35.0, 5.0, -4.0], degrees=True)
+    _rotate_mock_frame_in_isaac(tpose_frame, neutral)
+    assert retargeter.calibrate(tpose_frame)
+    np.testing.assert_allclose(
+        retargeter.current_torso.quaternion_xyzw,
+        settings.robot_pelvis_quat_xyzw,
+    )
+
+    requested = Rotation.from_euler("ZXY", requested_deg, degrees=True)
+    _rotate_mock_frame_in_isaac(tpose_frame, neutral * requested * neutral.inv())
+    targets = retargeter.retarget(tpose_frame)
+
+    assert targets is not None
+    np.testing.assert_allclose(targets.torso.position, [0.0, 0.0, 0.72])
+    pelvis_world = Rotation.from_quat(settings.robot_pelvis_quat_xyzw)
+    actual = pelvis_world.inv() * Rotation.from_quat(targets.torso.quaternion_xyzw)
+    expected = Rotation.from_euler("ZXY", expected_deg, degrees=True)
+    assert (expected.inv() * actual).magnitude() == pytest.approx(0.0, abs=1.0e-7)
 
 
 # ---------------------------------------------------------------------------

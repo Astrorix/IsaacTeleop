@@ -51,6 +51,31 @@ def test_config_covers_only_six_upper_body_targets() -> None:
     }
 
 
+def test_config_contains_every_pink_task_weight() -> None:
+    config = load_noitom_ik_config(DEFAULT_NOITOM_IK_CONFIG_PATH)
+
+    for side in ("left", "right"):
+        assert config.match(side, "wrist").position_weight == 5.0
+        assert config.match(side, "wrist").rotation_weight == 0.75
+        assert config.match(side, "elbow").position_weight == 0.5
+        assert config.match(side, "elbow").rotation_weight == 0.0
+        assert config.match(side, "shoulder").position_weight == 0.0
+        assert config.match(side, "shoulder").rotation_weight == 0.0
+    assert config.pink_task_weights.torso_position == 0.0
+    assert config.pink_task_weights.torso_rotation == 5.0
+    assert config.pink_task_weights.null_space_posture == 0.05
+
+
+def test_config_rejects_negative_pink_task_weight(tmp_path) -> None:
+    raw = json.loads(DEFAULT_NOITOM_IK_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw["pink_task_weights"]["torso_rotation"] = -1.0
+    invalid_path = tmp_path / "negative-pink-weight.json"
+    invalid_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        load_noitom_ik_config(invalid_path)
+
+
 def test_config_wrist_offsets_normalize_mirrored_hand_frames() -> None:
     config = load_noitom_ik_config(DEFAULT_NOITOM_IK_CONFIG_PATH)
 

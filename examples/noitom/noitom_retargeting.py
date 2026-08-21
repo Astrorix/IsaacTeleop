@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Noitom full-body to G1 wrist SE3 retargeting for locomanipulation teleop.
+"""Noitom full-body to G1 upper-body SE3 retargeting for locomanipulation teleop.
 
 Uses **posture-based** arm retargeting: mocap bone *directions* with G1 link
 lengths (not scaled human joint positions). Wrist SE(3) targets feed Pink IK.
@@ -50,6 +50,9 @@ _DEFAULT_RIGHT_WRIST_POS = np.array([0.18, 0.1, 0.8], dtype=np.float64)
 _DEFAULT_LEFT_WRIST_QUAT = np.array([-0.2706, 0.6533, 0.2706, 0.6533], dtype=np.float64)
 _DEFAULT_RIGHT_WRIST_QUAT = np.array([-0.7071, 0.0, 0.7071, 0.0], dtype=np.float64)
 _DEFAULT_ROBOT_PELVIS = np.array([0.0, 0.0, 0.72], dtype=np.float64)
+_DEFAULT_ROBOT_PELVIS_QUAT = np.array(
+    [0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)], dtype=np.float64
+)
 # Approximate G1 shoulder origins in pelvis frame (Isaac Z-up, +Y left).
 _ROBOT_LEFT_SHOULDER_OFFSET = np.array([0.05, 0.19, 0.30], dtype=np.float64)
 _ROBOT_RIGHT_SHOULDER_OFFSET = np.array([0.05, -0.19, 0.30], dtype=np.float64)
@@ -78,6 +81,15 @@ class NoitomIkMatch:
 
 
 @dataclass(frozen=True)
+class NoitomPinkTaskWeights:
+    """Pink task weights that are not part of an arm-link mapping."""
+
+    torso_position: float
+    torso_rotation: float
+    null_space_posture: float
+
+
+@dataclass(frozen=True)
 class NoitomIkConfig:
     """Validated upper-body subset of the GMR-style Noitom mapping config."""
 
@@ -87,6 +99,7 @@ class NoitomIkConfig:
     human_scale_table: dict[str, float]
     arm_segment_clamps_m: dict[str, float]
     ik_match_table: dict[str, NoitomIkMatch]
+    pink_task_weights: NoitomPinkTaskWeights
 
     def match(self, side: str, role: str) -> NoitomIkMatch:
         return self.ik_match_table[self.arm_chains[side][role]]
@@ -118,6 +131,29 @@ def load_noitom_ik_config(path: str | _os.PathLike) -> NoitomIkConfig:
         raise ValueError(f"{config_path}: 'human_root_name' must be a non-empty string")
     if not isinstance(robot_root_name, str) or not robot_root_name:
         raise ValueError(f"{config_path}: 'robot_root_name' must be a non-empty string")
+
+    raw_pink_task_weights = require_mapping("pink_task_weights")
+    pink_task_weight_keys = {
+        "torso_position",
+        "torso_rotation",
+        "null_space_posture",
+    }
+    if set(raw_pink_task_weights) != pink_task_weight_keys:
+        raise ValueError(
+            f"{config_path}: pink_task_weights must contain exactly "
+            f"{sorted(pink_task_weight_keys)}"
+        )
+    parsed_pink_task_weights = {
+        key: float(raw_pink_task_weights[key]) for key in pink_task_weight_keys
+    }
+    if any(
+        not np.isfinite(value) or value < 0.0
+        for value in parsed_pink_task_weights.values()
+    ):
+        raise ValueError(
+            f"{config_path}: Pink task weights must be finite and nonnegative"
+        )
+    pink_task_weights = NoitomPinkTaskWeights(**parsed_pink_task_weights)
 
     raw_chains = require_mapping("arm_chains")
     arm_chains: dict[str, dict[str, str]] = {}
@@ -241,6 +277,7 @@ def load_noitom_ik_config(path: str | _os.PathLike) -> NoitomIkConfig:
         human_scale_table=human_scale_table,
         arm_segment_clamps_m=clamps,
         ik_match_table=matches,
+        pink_task_weights=pink_task_weights,
     )
 
 
@@ -271,7 +308,7 @@ def _arm_bone_scales_from_config(
 
 @dataclass
 class NoitomRetargetingSettings:
-    """Tunable retargeting parameters for Noitom-driven G1 wrists."""
+    """Tunable retargeting parameters for Noitom-driven G1 upper body."""
 
     # Fraction of mocap pose applied relative to calibrated neutral (not link length).
     motion_scale: float = 0.55
@@ -285,6 +322,14 @@ class NoitomRetargetingSettings:
     max_torso_yaw_delta: float = 0.22
     # Fraction of torso yaw applied to arms (lower = arms ignore body twist).
     torso_yaw_arm_influence: float = 0.35
+    # Scale calibration-relative torso yaw/roll/pitch sent to the G1 waist.
+    torso_orientation_scale: float = 1.0
+    # Torso orientation smoothing alpha (0=hold last, 1=instant).
+    torso_rotation_smoothing: float = 0.35
+    # Bounds keep the torso target inside the G1 waist's useful workspace.
+    torso_yaw_limit_deg: float = 120.0
+    torso_roll_limit_deg: float = 24.0
+    torso_pitch_limit_deg: float = 24.0
     position_smoothing: float = 0.85
     rotation_smoothing: float = 0.75
     robot_upper_arm_length: float = 0.28
@@ -293,6 +338,9 @@ class NoitomRetargetingSettings:
     arm_scale_max: float = 1.5
     robot_pelvis_world: np.ndarray = field(
         default_factory=lambda: _DEFAULT_ROBOT_PELVIS.copy()
+    )
+    robot_pelvis_quat_xyzw: np.ndarray = field(
+        default_factory=lambda: _DEFAULT_ROBOT_PELVIS_QUAT.copy()
     )
     robot_left_shoulder_offset: np.ndarray = field(
         default_factory=lambda: _ROBOT_LEFT_SHOULDER_OFFSET.copy()
@@ -368,10 +416,11 @@ class SE3Pose:
 
 @dataclass
 class ArmIkTargets:
-    """Pink IK frame targets for one update (wrist, elbow, shoulder per arm)."""
+    """Pink IK frame targets for one upper-body update."""
 
     left_wrist: SE3Pose
     right_wrist: SE3Pose
+    torso: SE3Pose
     left_elbow: SE3Pose
     right_elbow: SE3Pose
     left_shoulder: SE3Pose
@@ -651,6 +700,15 @@ class NoitomG1Retargeter(BaseRetargeter):
                 f"{sorted(_WRIST_ORIENTATION_MODES)}, got "
                 f"{self._settings.wrist_orientation_mode!r}"
             )
+        if self._settings.torso_orientation_scale < 0.0:
+            raise ValueError("torso_orientation_scale must be nonnegative")
+        torso_limits = (
+            self._settings.torso_yaw_limit_deg,
+            self._settings.torso_roll_limit_deg,
+            self._settings.torso_pitch_limit_deg,
+        )
+        if any(limit <= 0.0 for limit in torso_limits):
+            raise ValueError("torso orientation limits must be positive")
         self._nominal_left = SE3Pose.from_nominal(
             self._settings.nominal_left_wrist_pos,
             self._settings.nominal_left_wrist_quat_xyzw,
@@ -661,6 +719,7 @@ class NoitomG1Retargeter(BaseRetargeter):
         )
         self._calibration: _CalibrationState | None = None
         self._latest_torso: _TorsoFrame | None = None
+        self._current_torso = self._neutral_torso_target()
         self._ik_config: NoitomIkConfig | None = None
         if self._settings.ik_config_path is not None:
             self._ik_config = load_noitom_ik_config(self._settings.ik_config_path)
@@ -688,6 +747,17 @@ class NoitomG1Retargeter(BaseRetargeter):
                     max_value=1.0,
                     step_size=0.05,
                     sync_fn=lambda v: setattr(self._settings, "motion_scale", v),
+                ),
+                FloatParameter(
+                    "torso_orientation_scale",
+                    "Calibration-relative torso orientation amplitude.",
+                    default_value=self._settings.torso_orientation_scale,
+                    min_value=0.0,
+                    max_value=1.5,
+                    step_size=0.05,
+                    sync_fn=lambda v: setattr(
+                        self._settings, "torso_orientation_scale", v
+                    ),
                 ),
                 FloatParameter(
                     "position_smoothing",
@@ -769,6 +839,10 @@ class NoitomG1Retargeter(BaseRetargeter):
         return self._right_arm.current_wrist
 
     @property
+    def current_torso(self) -> SE3Pose:
+        return self._current_torso
+
+    @property
     def current_left_elbow(self) -> SE3Pose:
         return self._left_arm.current_elbow
 
@@ -789,6 +863,7 @@ class NoitomG1Retargeter(BaseRetargeter):
         return ArmIkTargets(
             left_wrist=self._left_arm.current_wrist,
             right_wrist=self._right_arm.current_wrist,
+            torso=self._current_torso,
             left_elbow=self._left_arm.current_elbow,
             right_elbow=self._right_arm.current_elbow,
             left_shoulder=self._left_arm.current_shoulder,
@@ -1122,8 +1197,15 @@ class NoitomG1Retargeter(BaseRetargeter):
     def clear_calibration(self) -> None:
         self._calibration = None
         self._latest_torso = None
+        self._current_torso = self._neutral_torso_target()
         self._left_arm.reset()
         self._right_arm.reset()
+
+    def _neutral_torso_target(self) -> SE3Pose:
+        return SE3Pose(
+            self._settings.robot_pelvis_world.astype(np.float64).copy(),
+            _normalize_quat(self._settings.robot_pelvis_quat_xyzw),
+        )
 
     def calibrate(self, frame: Any) -> bool:
         self._sync_parameters_from_state()
@@ -1341,6 +1423,7 @@ class NoitomG1Retargeter(BaseRetargeter):
         self._right_arm.reset_to_nominal(
             nominal_right, nominal_right_elbow, nominal_right_shoulder
         )
+        self._current_torso = self._neutral_torso_target()
         return True
 
     def retarget(self, frame: Any) -> ArmIkTargets | None:
@@ -1354,6 +1437,15 @@ class NoitomG1Retargeter(BaseRetargeter):
         torso, left, right, pelvis_world = parsed
         self._latest_torso = torso
         calib = self._calibration
+        torso_target = _torso_target_from_relative_motion(
+            torso, calib.torso, self._settings
+        )
+        self._current_torso = _smooth_pose(
+            self._current_torso,
+            torso_target,
+            position_alpha=0.0,
+            rotation_alpha=self._settings.torso_rotation_smoothing,
+        )
         left_bone_scales = calib.left_arm_bone_scales
         right_bone_scales = calib.right_arm_bone_scales
         left_twist_rad: float | None = None
@@ -1718,6 +1810,32 @@ def _compute_torso_yaw(torso: _TorsoFrame) -> float:
 def _reference_alignment_rotation(torso: _TorsoFrame) -> Rotation:
     """Yaw-align raw source frames with the cyan skeleton facing G1 world +Y."""
     return Rotation.from_euler("z", np.pi * 0.5 - _compute_torso_yaw(torso))
+
+
+def _torso_target_from_relative_motion(
+    torso: _TorsoFrame,
+    neutral_torso: _TorsoFrame,
+    settings: NoitomRetargetingSettings,
+) -> SE3Pose:
+    """Map calibration-relative torso orientation into the fixed G1 pelvis frame."""
+    relative = neutral_torso.rotation.inv() * torso.rotation
+
+    yaw_roll_pitch = relative.as_euler("ZXY") * settings.torso_orientation_scale
+    limits = np.deg2rad(
+        [
+            settings.torso_yaw_limit_deg,
+            settings.torso_roll_limit_deg,
+            settings.torso_pitch_limit_deg,
+        ]
+    )
+    bounded = np.clip(yaw_roll_pitch, -limits, limits)
+    pelvis_world_rotation = Rotation.from_quat(
+        _normalize_quat(settings.robot_pelvis_quat_xyzw)
+    )
+    quaternion = _normalize_quat(
+        (pelvis_world_rotation * Rotation.from_euler("ZXY", bounded)).as_quat()
+    )
+    return SE3Pose(settings.robot_pelvis_world.astype(np.float64).copy(), quaternion)
 
 
 def _aligned_source_wrist_rotation(
@@ -3082,6 +3200,7 @@ __all__ = [
     "NoitomG1Retargeter",
     "NoitomIkConfig",
     "NoitomIkMatch",
+    "NoitomPinkTaskWeights",
     "NoitomRetargetingSettings",
     "WristOrientationDiagnostics",
     "WristPoseDiagnostics",

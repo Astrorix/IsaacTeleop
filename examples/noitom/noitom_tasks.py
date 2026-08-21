@@ -57,9 +57,11 @@ TASK_ID = "Isaac-PickPlace-Locomanipulation-G1-Noitom-Abs-v0"
 
 _FULL_BODY_INPUT = "deviceio_full_body"
 _ACTION_OUTPUT = "action"
-_G1_ACTION_DIM_WRIST_ONLY = 28
-_G1_ACTION_DIM_WITH_ARM_IK = 56
+_G1_ACTION_DIM_WRIST_TORSO = 35
+_G1_ACTION_DIM_WITH_ARM_IK = 63
 _PINK_PELVIS_LINK = "g1_29dof_with_hand_rev_1_0_pelvis"
+# The generated Pink URDF prefixes the pelvis and limb links, but not waist-chain links.
+_PINK_TORSO_LINK = "torso_link"
 _PINK_LEFT_ELBOW_LINK = "g1_29dof_with_hand_rev_1_0_left_elbow_link"
 _PINK_RIGHT_ELBOW_LINK = "g1_29dof_with_hand_rev_1_0_right_elbow_link"
 _PINK_LEFT_SHOULDER_LINK = "g1_29dof_with_hand_rev_1_0_left_shoulder_pitch_link"
@@ -94,7 +96,7 @@ def g1_action_dim(*, use_arm_ik_frame_tasks: bool) -> int:
     return (
         _G1_ACTION_DIM_WITH_ARM_IK
         if use_arm_ik_frame_tasks
-        else _G1_ACTION_DIM_WRIST_ONLY
+        else _G1_ACTION_DIM_WRIST_TORSO
     )
 
 
@@ -122,10 +124,8 @@ class NoitomG1Settings:
     wrist_frame_axis_length: float = 0.10
     draw_elbow_targets: bool = True
     draw_shoulder_targets: bool = True
-    # Wrist + elbow + shoulder LocalFrameTasks for Pink IK (56D action).
-    use_arm_ik_frame_tasks: bool = False
-    # Track wrist orientation without over-constraining elbow/shoulder frames.
-    wrist_orientation_cost: float = 0.75
+    # Wrist + torso + elbow + shoulder LocalFrameTasks for Pink IK (63D action).
+    use_arm_ik_frame_tasks: bool = True
     # Noitom-only Pink tuning for fast recorded motion.
     pink_task_gain: float = 0.20
     pink_lm_damping: float = 50.0
@@ -225,6 +225,26 @@ def _noitom_settings_from_env() -> NoitomG1Settings:
             "NOITOM_WRIST_TWIST_MAX_STEP_DEG",
             defaults.retargeting.wrist_twist_max_step_deg,
         ),
+        torso_orientation_scale=_env_float(
+            "NOITOM_TORSO_ORIENTATION_SCALE",
+            defaults.retargeting.torso_orientation_scale,
+        ),
+        torso_rotation_smoothing=_env_float(
+            "NOITOM_TORSO_ROTATION_SMOOTHING",
+            defaults.retargeting.torso_rotation_smoothing,
+        ),
+        torso_yaw_limit_deg=_env_float(
+            "NOITOM_TORSO_YAW_LIMIT_DEG",
+            defaults.retargeting.torso_yaw_limit_deg,
+        ),
+        torso_roll_limit_deg=_env_float(
+            "NOITOM_TORSO_ROLL_LIMIT_DEG",
+            defaults.retargeting.torso_roll_limit_deg,
+        ),
+        torso_pitch_limit_deg=_env_float(
+            "NOITOM_TORSO_PITCH_LIMIT_DEG",
+            defaults.retargeting.torso_pitch_limit_deg,
+        ),
         ik_config_path=os.environ.get(
             "NOITOM_IK_CONFIG", defaults.retargeting.ik_config_path
         ),
@@ -241,9 +261,6 @@ def _noitom_settings_from_env() -> NoitomG1Settings:
         clear_workspace=_env_bool("NOITOM_CLEAR_WORKSPACE", defaults.clear_workspace),
         draw_wrist_frames=_env_bool(
             "NOITOM_DRAW_WRIST_FRAMES", defaults.draw_wrist_frames
-        ),
-        wrist_orientation_cost=_env_float(
-            "NOITOM_WRIST_ORIENTATION_COST", defaults.wrist_orientation_cost
         ),
         pink_task_gain=_env_float("NOITOM_PINK_TASK_GAIN", defaults.pink_task_gain),
         pink_lm_damping=_env_float("NOITOM_PINK_LM_DAMPING", defaults.pink_lm_damping),
@@ -755,7 +772,6 @@ def _build_noitom_pink_ik_action_class(
 def _configure_noitom_pink_ik(
     env_cfg: NoitomLocomanipulationG1EnvCfg,
     use_arm_frames: bool,
-    wrist_orientation_cost: float,
     pink_task_gain: float,
     pink_lm_damping: float,
     orientation_debug: bool,
@@ -766,13 +782,15 @@ def _configure_noitom_pink_ik(
     wrist_yaw_limit_deg: float,
     ik_config_path: str | None,
 ) -> None:
-    """Tune Pink IK for Noitom teleop; optionally add elbow/shoulder frame tasks."""
+    """Tune Pink IK and add torso plus optional elbow/shoulder frame tasks."""
     from isaaclab.controllers.pink_ik import LocalFrameTaskCfg, NullSpacePostureTaskCfg
 
     if not 0.0 < pink_task_gain <= 1.0:
         raise ValueError("NOITOM_PINK_TASK_GAIN must be in (0, 1]")
     if pink_lm_damping < 0.0:
         raise ValueError("NOITOM_PINK_LM_DAMPING must be nonnegative")
+    if ik_config_path is None:
+        raise ValueError("Noitom Pink task weights require an IK config")
 
     env_cfg.actions.upper_body_ik.class_type = _build_noitom_pink_ik_action_class(
         orientation_debug,
@@ -784,63 +802,76 @@ def _configure_noitom_pink_ik(
     )
     controller = env_cfg.actions.upper_body_ik.controller
     controller.show_ik_warnings = orientation_debug
-    ik_config = (
-        None if ik_config_path is None else load_noitom_ik_config(ik_config_path)
-    )
+    ik_config = load_noitom_ik_config(ik_config_path)
+    task_weights = ik_config.pink_task_weights
 
     def configured_cost(frame: str, role: str, *, rotation: bool = False) -> float:
-        if ik_config is None:
-            fallback_costs = {"wrist": 18.0, "elbow": 9.0, "shoulder": 6.0}
-            return wrist_orientation_cost if rotation else fallback_costs[role]
         side = "left" if "left" in frame else "right"
         mapping = ik_config.match(side, role)
-        if rotation and role == "wrist":
-            # Keep the environment override as the final hardware tuning knob.
-            return wrist_orientation_cost
         return mapping.rotation_weight if rotation else mapping.position_weight
 
+    tasks = list(controller.variable_input_tasks)
+    wrist_task_count = sum(1 for task in tasks if isinstance(task, LocalFrameTaskCfg))
+    extra_frame_tasks = [
+        LocalFrameTaskCfg(
+            frame=_PINK_TORSO_LINK,
+            base_link_frame_name=_PINK_PELVIS_LINK,
+            position_cost=task_weights.torso_position,
+            orientation_cost=task_weights.torso_rotation,
+            lm_damping=pink_lm_damping,
+            gain=pink_task_gain,
+        )
+    ]
     if use_arm_frames:
-        tasks = list(controller.variable_input_tasks)
-        wrist_task_count = sum(
-            1 for task in tasks if isinstance(task, LocalFrameTaskCfg)
+        extra_frame_tasks.extend(
+            [
+                LocalFrameTaskCfg(
+                    frame=_PINK_LEFT_ELBOW_LINK,
+                    base_link_frame_name=_PINK_PELVIS_LINK,
+                    position_cost=configured_cost(_PINK_LEFT_ELBOW_LINK, "elbow"),
+                    orientation_cost=configured_cost(
+                        _PINK_LEFT_ELBOW_LINK, "elbow", rotation=True
+                    ),
+                    lm_damping=pink_lm_damping,
+                    gain=pink_task_gain,
+                ),
+                LocalFrameTaskCfg(
+                    frame=_PINK_RIGHT_ELBOW_LINK,
+                    base_link_frame_name=_PINK_PELVIS_LINK,
+                    position_cost=configured_cost(_PINK_RIGHT_ELBOW_LINK, "elbow"),
+                    orientation_cost=configured_cost(
+                        _PINK_RIGHT_ELBOW_LINK, "elbow", rotation=True
+                    ),
+                    lm_damping=pink_lm_damping,
+                    gain=pink_task_gain,
+                ),
+                LocalFrameTaskCfg(
+                    frame=_PINK_LEFT_SHOULDER_LINK,
+                    base_link_frame_name=_PINK_PELVIS_LINK,
+                    position_cost=configured_cost(_PINK_LEFT_SHOULDER_LINK, "shoulder"),
+                    orientation_cost=configured_cost(
+                        _PINK_LEFT_SHOULDER_LINK, "shoulder", rotation=True
+                    ),
+                    lm_damping=pink_lm_damping,
+                    gain=pink_task_gain,
+                ),
+                LocalFrameTaskCfg(
+                    frame=_PINK_RIGHT_SHOULDER_LINK,
+                    base_link_frame_name=_PINK_PELVIS_LINK,
+                    position_cost=configured_cost(
+                        _PINK_RIGHT_SHOULDER_LINK, "shoulder"
+                    ),
+                    orientation_cost=configured_cost(
+                        _PINK_RIGHT_SHOULDER_LINK, "shoulder", rotation=True
+                    ),
+                    lm_damping=pink_lm_damping,
+                    gain=pink_task_gain,
+                ),
+            ]
         )
-        arm_frame_tasks = [
-            LocalFrameTaskCfg(
-                frame=_PINK_LEFT_ELBOW_LINK,
-                base_link_frame_name=_PINK_PELVIS_LINK,
-                position_cost=configured_cost(_PINK_LEFT_ELBOW_LINK, "elbow"),
-                orientation_cost=0.0,
-                lm_damping=pink_lm_damping,
-                gain=pink_task_gain,
-            ),
-            LocalFrameTaskCfg(
-                frame=_PINK_RIGHT_ELBOW_LINK,
-                base_link_frame_name=_PINK_PELVIS_LINK,
-                position_cost=configured_cost(_PINK_RIGHT_ELBOW_LINK, "elbow"),
-                orientation_cost=0.0,
-                lm_damping=pink_lm_damping,
-                gain=pink_task_gain,
-            ),
-            LocalFrameTaskCfg(
-                frame=_PINK_LEFT_SHOULDER_LINK,
-                base_link_frame_name=_PINK_PELVIS_LINK,
-                position_cost=configured_cost(_PINK_LEFT_SHOULDER_LINK, "shoulder"),
-                orientation_cost=0.0,
-                lm_damping=pink_lm_damping,
-                gain=pink_task_gain,
-            ),
-            LocalFrameTaskCfg(
-                frame=_PINK_RIGHT_SHOULDER_LINK,
-                base_link_frame_name=_PINK_PELVIS_LINK,
-                position_cost=configured_cost(_PINK_RIGHT_SHOULDER_LINK, "shoulder"),
-                orientation_cost=0.0,
-                lm_damping=pink_lm_damping,
-                gain=pink_task_gain,
-            ),
-        ]
-        controller.variable_input_tasks = (
-            tasks[:wrist_task_count] + arm_frame_tasks + tasks[wrist_task_count:]
-        )
+    controller.variable_input_tasks = (
+        tasks[:wrist_task_count] + extra_frame_tasks + tasks[wrist_task_count:]
+    )
 
     for task in controller.variable_input_tasks:
         if isinstance(task, LocalFrameTaskCfg):
@@ -850,6 +881,9 @@ def _configure_noitom_pink_ik(
             if "wrist" in frame:
                 task.position_cost = configured_cost(frame, "wrist")
                 task.orientation_cost = configured_cost(frame, "wrist", rotation=True)
+            elif frame == _PINK_TORSO_LINK:
+                task.position_cost = task_weights.torso_position
+                task.orientation_cost = task_weights.torso_rotation
             elif "elbow" in frame:
                 task.position_cost = configured_cost(frame, "elbow")
                 task.orientation_cost = configured_cost(frame, "elbow", rotation=True)
@@ -859,10 +893,9 @@ def _configure_noitom_pink_ik(
                     frame, "shoulder", rotation=True
                 )
             else:
-                task.position_cost = 14.0
-                task.orientation_cost = 0.0
+                raise ValueError(f"No Pink task weights configured for frame {frame!r}")
         elif isinstance(task, NullSpacePostureTaskCfg):
-            task.cost = 0.05
+            task.cost = task_weights.null_space_posture
             task.gain = pink_task_gain
             task.lm_damping = pink_lm_damping
 
@@ -889,6 +922,15 @@ class NoitomLocomanipulationG1EnvCfg(LocomanipulationG1EnvCfg):
         """Use the base scene/action config and swap in the Noitom pipeline."""
         super().__post_init__()
         settings = _noitom_settings_from_env()
+        settings = replace(
+            settings,
+            retargeting=replace(
+                settings.retargeting,
+                robot_pelvis_quat_xyzw=np.asarray(
+                    self.scene.robot.init_state.rot, dtype=np.float64
+                ),
+            ),
+        )
         self.isaac_teleop.pipeline_builder = lambda: (
             build_noitom_g1_locomanipulation_pipeline(settings)
         )
@@ -918,13 +960,11 @@ class NoitomLocomanipulationG1EnvCfg(LocomanipulationG1EnvCfg):
         self.scene.robot.spawn.articulation_props.fix_root_link = True
         self.actions.lower_body_joint_pos = None
         self.observations.lower_body_policy = None
-        # Pink IK: wrist primary, elbow/shoulder secondary frame tasks.
-        # Waist stays in IK and is clipped inside its hard stops. Noitom wrist
-        # pitch/yaw bounds are enforced by Pink and again on the solved targets.
+        # Pink IK: wrists plus an orientation-only torso task, with optional
+        # elbow/shoulder position tasks. Root stays fixed while waist remains in IK.
         _configure_noitom_pink_ik(
             self,
             use_arm_frames=settings.use_arm_ik_frame_tasks,
-            wrist_orientation_cost=settings.wrist_orientation_cost,
             pink_task_gain=settings.pink_task_gain,
             pink_lm_damping=settings.pink_lm_damping,
             orientation_debug=settings.orientation_debug,
@@ -963,7 +1003,7 @@ def G1LocomanipulationAction(*, use_arm_ik_frame_tasks: bool = True) -> TensorGr
 
 
 class NoitomG1ActionSource(IDeviceIOSource):
-    """Convert Noitom mocap frames into G1 locomanipulation wrist actions."""
+    """Convert Noitom mocap frames into G1 upper-body task-space actions."""
 
     def __init__(
         self,
@@ -1210,6 +1250,7 @@ class NoitomG1ActionSource(IDeviceIOSource):
         calib = "ready" if self._retargeter.is_calibrated else "awaiting_neutral"
         left_pose = self._hold_targets.left_wrist.as_action_pose()
         right_pose = self._hold_targets.right_wrist.as_action_pose()
+        torso_pose = self._hold_targets.torso.as_action_pose()
         frame_info = ""
         if self._use_arm_ik_frame_tasks:
             left_elbow_pose = self._hold_targets.left_elbow.as_action_pose()
@@ -1231,6 +1272,7 @@ class NoitomG1ActionSource(IDeviceIOSource):
             f"wrist_orientation_mode="
             f"{self._retargeter.retargeting_settings.wrist_orientation_mode} "
             f"torso_yaw_influence={self._retargeter.retargeting_settings.torso_yaw_arm_influence:.2f} "
+            f"target_torso_quat={_fmt_quat(torso_pose[3:7])} "
             f"target_left={_fmt_pose(left_pose)} target_right={_fmt_pose(right_pose)}"
             f"{frame_info} "
             f"{_raw_full_body_status(frame)}"
@@ -1324,13 +1366,14 @@ def _make_action(
     )
     action[0:7] = targets.left_wrist.as_action_pose()
     action[7:14] = targets.right_wrist.as_action_pose()
-    hand_offset = 14
+    action[14:21] = targets.torso.as_action_pose()
+    hand_offset = 21
     if use_arm_ik_frame_tasks:
-        action[14:21] = targets.left_elbow.as_action_pose()
-        action[21:28] = targets.right_elbow.as_action_pose()
-        action[28:35] = targets.left_shoulder.as_action_pose()
-        action[35:42] = targets.right_shoulder.as_action_pose()
-        hand_offset = 42
+        action[21:28] = targets.left_elbow.as_action_pose()
+        action[28:35] = targets.right_elbow.as_action_pose()
+        action[35:42] = targets.left_shoulder.as_action_pose()
+        action[42:49] = targets.right_shoulder.as_action_pose()
+        hand_offset = 49
     action[hand_offset : hand_offset + 14] = 0.0
     return action
 

@@ -35,46 +35,51 @@
     "forearm_min": 0.1,
     "forearm_max": 0.45
   },
+  "pink_task_weights": {
+    "torso_position": 0.0,
+    "torso_rotation": 5.0,
+    "null_space_posture": 0.05
+  },
   "ik_match_table": {
     "left_shoulder_yaw_link": [
       "LEFT_SHOULDER",
-      5.0,
-      10.0,
+      0.0,
+      0.0,
       [0.0, 0.0, 0.0],
       [-0.2706, 0.6533, 0.2706, 0.6533]
     ],
     "left_elbow_link": [
       "LEFT_ELBOW",
-      5.0,
-      10.0,
+      0.5,
+      0.0,
       [0.0, 0.0, 0.0],
       [-0.2706, 0.6533, 0.2706, 0.6533]
     ],
     "left_wrist_yaw_link": [
       "LEFT_WRIST",
       5.0,
-      10.0,
+      0.75,
       [0.0, 0.0, 0.0],
       [0.0, 0.7071, 0.7071, 0.0]
     ],
     "right_shoulder_yaw_link": [
       "RIGHT_SHOULDER",
-      5.0,
-      10.0,
+      0.0,
+      0.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.7071, 0.0]
     ],
     "right_elbow_link": [
       "RIGHT_ELBOW",
-      5.0,
-      10.0,
+      0.5,
+      0.0,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.7071, 0.0]
     ],
     "right_wrist_yaw_link": [
       "RIGHT_WRIST",
       5.0,
-      10.0,
+      0.75,
       [0.0, 0.0, 0.0],
       [-0.7071, 0.0, 0.0, 0.7071]
     ]
