@@ -152,9 +152,9 @@ exec "$@"
 EOF
 
 # -----------------------------------------------------------------------------
-# Stage 3: runtime image (install tree only)
+# Stage 3: runtime base (install tree only)
 # -----------------------------------------------------------------------------
-FROM base
+FROM base AS runtime_base
 ARG PYTHON_VERSION
 
 WORKDIR /opt/isaacteleop/install/examples/teleop_ros2/python
@@ -172,6 +172,7 @@ ENV VK_DRIVER_FILES=/etc/vulkan/icd.d/nvidia_icd.json
 COPY src/core/python/requirements.txt \
      src/core/python/requirements-retargeters.txt \
      src/core/python/requirements-grounding.txt \
+     src/core/python/requirements-wuji.txt \
      src/core/python/requirements-cloudxr.txt \
      /tmp/
 RUN uv venv --python=${PYTHON_VERSION} && \
@@ -180,11 +181,13 @@ RUN uv venv --python=${PYTHON_VERSION} && \
         -r /tmp/requirements.txt \
         -r /tmp/requirements-retargeters.txt \
         -r /tmp/requirements-grounding.txt \
+        -r /tmp/requirements-wuji.txt \
         -r /tmp/requirements-cloudxr.txt \
         msgpack msgpack-numpy && \
     rm /tmp/requirements.txt \
        /tmp/requirements-retargeters.txt \
        /tmp/requirements-grounding.txt \
+       /tmp/requirements-wuji.txt \
        /tmp/requirements-cloudxr.txt
 
 COPY --from=builder /opt/isaacteleop/install /opt/isaacteleop/install
@@ -216,6 +219,13 @@ RUN set -eu; \
     version=$(basename "$wheel" | sed -E 's/^isaacteleop-([^-]+)-.*$/\1/'); \
     echo "== pinning isaacteleop==${version} =="; \
     uv sync --no-dev --upgrade-package "isaacteleop==${version}"
+
+# Test-only image: keep the production runtime free of source tests.
+FROM runtime_base AS test
+COPY tests/python/examples/teleop_ros2/ tests/
+
+# Production image.
+FROM runtime_base AS runtime
 
 # Use --no-sync because the venv is already provisioned above.
 ENTRYPOINT ["/usr/local/bin/teleop-entrypoint", "uv", "run", "--no-sync", "teleop_ros2_node.py"]
