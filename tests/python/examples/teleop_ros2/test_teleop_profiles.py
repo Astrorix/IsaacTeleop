@@ -18,7 +18,6 @@ from constants import (
     TeleopMode,
     resolve_hand_retargeter,
 )
-from session_config import validate_joint_name_alias_count
 from teleop_profiles import (
     TELEOP_PROFILE_SPECS,
     PublishType,
@@ -173,11 +172,15 @@ def test_manus_transform_is_resolved_with_controller_ee_profile() -> None:
 
 
 def test_joint_alias_count_validation() -> None:
-    validate_joint_name_alias_count("left_finger_joint_names", None, 2)
-    validate_joint_name_alias_count("left_finger_joint_names", ["a", "b"], 2)
+    session_config._validate_joint_name_alias_count("left_finger_joint_names", None, 2)
+    session_config._validate_joint_name_alias_count(
+        "left_finger_joint_names", ["a", "b"], 2
+    )
 
     with pytest.raises(ValueError, match="must contain exactly 2"):
-        validate_joint_name_alias_count("left_finger_joint_names", ["a"], 2)
+        session_config._validate_joint_name_alias_count(
+            "left_finger_joint_names", ["a"], 2
+        )
 
 
 def test_wuji_default_joint_names_are_side_qualified_and_unique() -> None:
@@ -191,14 +194,14 @@ def test_wuji_default_joint_names_are_side_qualified_and_unique() -> None:
 
 
 def test_wuji_joint_alias_count_validation() -> None:
-    validate_joint_name_alias_count(
+    session_config._validate_joint_name_alias_count(
         "left_finger_joint_names",
         [f"left_joint_{index}" for index in range(WUJI_HAND_JOINT_COUNT)],
         WUJI_HAND_JOINT_COUNT,
     )
 
     with pytest.raises(ValueError, match="must contain exactly 20"):
-        validate_joint_name_alias_count(
+        session_config._validate_joint_name_alias_count(
             "left_finger_joint_names",
             ["left_joint"] * (WUJI_HAND_JOINT_COUNT - 1),
             WUJI_HAND_JOINT_COUNT,
