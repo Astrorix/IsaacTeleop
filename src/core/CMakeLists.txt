@@ -6,6 +6,9 @@ cmake_minimum_required(VERSION 3.20)
 # Generated headers from FlatBuffer schemas with additional utilities.
 add_subdirectory(schema)
 
+# Grades one binary schema against another; used by the conform test and by replay.
+add_subdirectory(schema_compat)
+
 # Build OXR Utils first - header-only utilities (no dependencies)
 add_subdirectory(oxr_utils)
 
