@@ -17,7 +17,9 @@ in **[`trackers.toml`](trackers.toml)** and generated at configure time by
 under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
 
 - **Adding one is a manifest edit**, not a new source file: `name` and `table` are required, every
-  other key has a `%placeholder%` default in [`defaults.toml`](defaults.toml). Override a key only
+  other key has a default in [`defaults.toml`](defaults.toml) — most derive from `name` through
+  `%placeholder%` substitution, a few (`direction`, `record`, `max_flatbuffer_size`, …) are plain
+  constants. Override a key only
   where the convention genuinely does not hold (`se3_tracker` sets `class`; `generic_3axis_pedal`
   sets `schema` because its `.fbs` is `pedals.fbs`; `frame_metadata_oak` sets `header` so the
   public `#include` stem stays `frame_metadata_tracker_oak`).
@@ -27,7 +29,7 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
   blocks, MCAP recording traits, and the Python `__all__` are emitted as `.inc` fragments that the
   hand-written files `#include`; adding a row yourself produces a duplicate definition.
 - **`__init__.py` needs no edit for new manifest trackers.**
-  [`../../../python/isaacteleop/deviceio_trackers/__init__.py`](../../../python/isaacteleop/deviceio_trackers/__init__.py)
+  [`../../python/isaacteleop/deviceio_trackers/__init__.py`](../../python/isaacteleop/deviceio_trackers/__init__.py)
   star-imports `_generated_tracker_exports` (staged from configure-time codegen into the wheel
   tree; for scikit-build-core / editable installs it is also installed via ``isaacteleop_wheel``
   because it is not authored under ``src/python/``) and splices its ``__all__``. The legacy `isaacteleop.deviceio` shim is a **frozen** compat
