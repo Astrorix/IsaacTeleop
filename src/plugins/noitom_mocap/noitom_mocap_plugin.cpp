@@ -372,18 +372,18 @@ std::vector<MocapApi::MCPAvatarHandle_t> NoitomMocapPlugin::poll_updated_avatars
         ++poll_attempt_count;
         uint32_t event_count = 0;
         MocapApi::EMCPError err = application_api_->PollApplicationNextEvent(nullptr, &event_count, application_handle_);
-        if (err == MocapApi::Error_MoreEvent || err == MocapApi::Error_InsufficientBuffer)
-        {
-            continue;
-        }
-        if (err != MocapApi::Error_None)
+        if (err != MocapApi::Error_None && err != MocapApi::Error_MoreEvent && err != MocapApi::Error_InsufficientBuffer)
         {
             throw std::runtime_error("PollApplicationNextEvent(count): " + error_string(err));
         }
         if (event_count == 0)
         {
-            drained = true;
-            break;
+            if (err == MocapApi::Error_None)
+            {
+                drained = true;
+                break;
+            }
+            continue;
         }
         const uint32_t pending_event_count = event_count;
         last_pending_event_count = pending_event_count;
@@ -410,11 +410,11 @@ std::vector<MocapApi::MCPAvatarHandle_t> NoitomMocapPlugin::poll_updated_avatars
         }
 
         err = application_api_->PollApplicationNextEvent(batch.data(), &event_count, application_handle_);
-        if (err == MocapApi::Error_MoreEvent || err == MocapApi::Error_InsufficientBuffer)
+        if (err == MocapApi::Error_InsufficientBuffer)
         {
             continue;
         }
-        if (err != MocapApi::Error_None)
+        if (err != MocapApi::Error_None && err != MocapApi::Error_MoreEvent)
         {
             throw std::runtime_error("PollApplicationNextEvent(events): " + error_string(err));
         }
@@ -461,7 +461,7 @@ std::vector<MocapApi::MCPAvatarHandle_t> NoitomMocapPlugin::poll_updated_avatars
             }
         }
 
-        if (pending_event_count == 1)
+        if (err == MocapApi::Error_None && pending_event_count == 1)
         {
             drained = true;
             break;
